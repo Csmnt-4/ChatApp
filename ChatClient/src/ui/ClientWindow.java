@@ -1,20 +1,18 @@
 package ui;
 
+import manager.ConnectionManager;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.net.Socket;
 
 public class ClientWindow extends JFrame implements ActionListener {
-    private JTextField usernameField;
-    private JTextField ipAddressField;
+    private final JTextField usernameField;
+    private final JTextField ipAddressField;
 
-    private JButton startButton;
-    private String username;
-    private String ipAddress;
+    private final JButton startButton;
+    private final ConnectionManager connectionManager = new ConnectionManager();
 
     public ClientWindow() {
         setTitle("Chatroom Client");
@@ -24,12 +22,15 @@ public class ClientWindow extends JFrame implements ActionListener {
         JPanel panel = new JPanel();
         panel.setLayout(new GridLayout(3, 2));
 
-        JLabel usernameLabel = new JLabel("Username:");
+        JLabel usernameLabel = new JLabel("\tUsername:");
+        usernameLabel.setHorizontalAlignment(0);
         usernameField = new JTextField();
-        JLabel ipAddressLabel = new JLabel("IP Address:");
+        JLabel ipAddressLabel = new JLabel("\tIP Address:");
+        ipAddressLabel.setHorizontalAlignment(0);
         ipAddressField = new JTextField();
         startButton = new JButton("START");
-
+//        startButton.setMaximumSize(new Dimension(20, 10));
+        startButton.setHorizontalAlignment(0);
         startButton.addActionListener(this);
 
         panel.add(usernameLabel);
@@ -38,6 +39,9 @@ public class ClientWindow extends JFrame implements ActionListener {
         panel.add(ipAddressField);
         panel.add(startButton);
 
+        panel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.setAlignmentY(Component.CENTER_ALIGNMENT);
+
         add(panel);
         setVisible(true);
     }
@@ -45,35 +49,19 @@ public class ClientWindow extends JFrame implements ActionListener {
     @Override
     public void actionPerformed(ActionEvent e) {
         if (e.getSource() == startButton) {
-            username = usernameField.getText();
-            ipAddress = ipAddressField.getText();
 
-            if (isValidIP(ipAddress)) {
-                startChat();
+            if (isValidIP(ipAddressField.getText())) {
+                connectionManager.setUsername(usernameField.getText());
+                connectionManager.setIpAddress(ipAddressField.getText());
+
+                connectionManager.requestChatNames();
+                connectionManager.selectChat();
+                // Close current window
+                setVisible(false);
+                dispose();
             } else {
                 JOptionPane.showMessageDialog(this, "Invalid IP address format", "Error", JOptionPane.ERROR_MESSAGE);
             }
-        }
-    }
-
-    private void startChat() {
-        try {
-            Socket socket = new Socket(ipAddress, 12345); // Change port if necessary
-            System.out.println("Connected to server");
-
-            // Send username to server
-            PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
-            writer.println(username);
-
-            // Open chat window without initially prompting for emoji
-            new ChatWindow(socket, username).setVisible(true);
-
-            // Close current window
-            setVisible(false);
-            dispose();
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, "Error connecting to server", "Error", JOptionPane.ERROR_MESSAGE);
-            ex.printStackTrace();
         }
     }
 

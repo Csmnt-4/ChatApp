@@ -1,56 +1,54 @@
 package ui;
 
+import manager.ConnectionManager;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import javax.swing.*;
 import javax.swing.text.StyledEditorKit;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.Socket;
-
 import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.util.*;
 
-class ChatWindow extends JFrame implements ActionListener {
-    private Socket socket;
-    private BufferedReader reader;
-    private PrintWriter writer;
-    private String username;
-    private JTextPane chatPane;
-    private JTextArea chatArea;
-    private JTextArea messageHistoryArea;
-    private JTextField messageField;
-    private JButton sendButton;
-    private JComboBox<String> emojiComboBox;
-    private JLabel selectedEmojiLabel;
-    private JButton disconnectButton;
+public class ChatWindow extends JFrame implements ActionListener {
 
-    public ChatWindow(Socket socket, String username) {
-        this.socket = socket;
-        this.username = username;
+    private final ConnectionManager connectionManagerReference;
+    private final JTextPane chatPane;
+    private final JTextArea chatArea;
+    private final JTextField messageField;
+    private final JButton sendButton;
+    private final JButton loadPreviousMessagesButton;
+    private final JComboBox<String> emojiComboBox;
+    private final JLabel selectedEmojiLabel;
+    private final JPanel topPane;
+    private final JPanel pane;
+    private final JButton disconnectButton;
+    public boolean hasNewMessages = false;
+    private ArrayList<HashMap<String, String>> messageList = new ArrayList<>();
+    private int numberOfMessages = 0;
 
-        setTitle("Chatroom - " + username);
+    public ChatWindow(String username, String chatName, ConnectionManager connectionManager) {
+        connectionManagerReference = connectionManager;
+
+        setTitle("Chatroom - " + chatName + " (" + username + ")");
         setSize(500, 500);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
-        JPanel panel = new JPanel();
-        panel.setLayout(new BorderLayout());
+        pane = new JPanel();
+        pane.setLayout(new BoxLayout(pane, BoxLayout.X_AXIS));
 
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         JScrollPane scrollPane = new JScrollPane(chatArea);
-        panel.add(scrollPane, BorderLayout.CENTER);
+        pane.add(scrollPane, BorderLayout.CENTER);
 
         JPanel messagePanel = new JPanel();
-        messagePanel.setLayout(new BorderLayout());
-
         JPanel buttonPanel = new JPanel(new BorderLayout());
 
         // Add a combobox for emoji selection
-        emojiComboBox = new JComboBox<>(new String[]{"", "😊", "😂", "😍", "👍", "🎉","⚽","🎯","🚑","🥷","🧜‍♂️","🧚‍♂️","💪"}); // Sample emojis
+        emojiComboBox = new JComboBox<>(new String[]{"", "😊", "😂", "😍", "👍", "🎉", "⚽", "🎯", "🚑", "🥷", "🧜‍♂️", "🧚‍♂️", "💪"}); // Sample emojis
         emojiComboBox.addActionListener(this);
         buttonPanel.add(emojiComboBox, BorderLayout.WEST);
 
@@ -67,55 +65,45 @@ class ChatWindow extends JFrame implements ActionListener {
         chatPane = new JTextPane();
         chatPane.setEditable(false);
         JScrollPane scrollPane2 = new JScrollPane(chatPane);
-        panel.add(scrollPane, BorderLayout.CENTER);
-
-        disconnectButton = new JButton("Disconnect");
-        disconnectButton.addActionListener(this);
+        pane.add(scrollPane, BorderLayout.CENTER);
+        messagePanel.setLayout(new BorderLayout(0, 0));
 
         messagePanel.add(buttonPanel, BorderLayout.SOUTH); // Move buttonPanel to the NORTH
 
         JScrollPane scrollPane1 = new JScrollPane(chatArea);
-        messagePanel.add(scrollPane1, BorderLayout.CENTER);
+        messagePanel.add(scrollPane1);
 
-        messagePanel.add(disconnectButton, BorderLayout.NORTH); // Add the Disconnect button to the SOUTH
+        pane.add(messagePanel);
 
-        panel.add(messagePanel, BorderLayout.CENTER);
+        topPane = new JPanel();
+        messagePanel.add(topPane, BorderLayout.NORTH);
+        topPane.setLayout(new BorderLayout(0, 0));
+
+        disconnectButton = new JButton("Disconnect");
+        disconnectButton.setHorizontalAlignment(SwingConstants.LEFT);
+        disconnectButton.setAlignmentY(Component.TOP_ALIGNMENT);
+        topPane.add(disconnectButton, BorderLayout.WEST);
+
+        loadPreviousMessagesButton = new JButton("Load previous");
+        loadPreviousMessagesButton.setHorizontalAlignment(SwingConstants.RIGHT);
+        topPane.add(loadPreviousMessagesButton, BorderLayout.EAST);
+
+        JLabel currentlyTypingLabel = new JLabel("");
+        topPane.add(currentlyTypingLabel, BorderLayout.CENTER);
         chatPane.setEditorKit(new StyledEditorKit());
 
-        add(panel);
+        getContentPane().add(pane);
 
-        try {
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            writer = new PrintWriter(socket.getOutputStream(), true);
+        connectionManagerReference.needsToUpdateChatWindow = true;
+        new Thread(this::updateMessages).start();
 
-            // Start a thread to continuously listen for messages from the server
-            new Thread(() -> {
-                try {
-                    String message;
-
-                    while ((message = reader.readLine()) != null) {
-                        final String finalMessage = message; // Create a final variable
-                        SwingUtilities.invokeLater(() -> {
-                            // Append received message to message history
-                            Date now = new Date();
-                            SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-                            SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
-
-                            String timestamp = dateFormat.format(now) + " " + timeFormat.format(now);
-                            //chatArea.append(finalMessage);
-                            chatArea.append("[" + timestamp + "] " + finalMessage + "\n"); // Append received message to chat area
-                        });
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }).start();
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
     }
 
+    private void updateMessages() {
+        while (connectionManagerReference.needsToUpdateChatWindow) {
+            connectionManagerReference.update();
+        }
+    }
 
     @Override
     public void actionPerformed(ActionEvent e) {
@@ -124,15 +112,15 @@ class ChatWindow extends JFrame implements ActionListener {
             String selectedEmoji = (String) emojiComboBox.getSelectedItem();
 
             // Append the user's typed message directly to the chat area
-            sendMessage(username + ": " + message + " " + selectedEmoji, true);
-
-            // Send the message to the server
-            writer.println(message + " " + selectedEmoji);
+            sendMessage(connectionManagerReference.getUsername() + ": " + message + " " + selectedEmoji);
             messageField.setText("");
         } else if (e.getSource() == emojiComboBox) {
             updateSelectedEmojiLabel(); // Update selected emoji label when an emoji is selected
         } else if (e.getSource() == disconnectButton) {
             disconnect();
+        } else if (e.getSource() == loadPreviousMessagesButton) {
+            numberOfMessages = messageList.size() + 30;
+            connectionManagerReference.requestMessages(0, numberOfMessages);
         }
     }
 
@@ -145,44 +133,98 @@ class ChatWindow extends JFrame implements ActionListener {
     private void disconnect() {
         int confirm = JOptionPane.showConfirmDialog(this, "Are you sure you want to disconnect?", "Disconnect", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
-            writer.println(username + " has left the chat.");
+            sendMessage("User " + connectionManagerReference.getUsername() + " has left the chat.");
+            this.setVisible(false);
             dispose();
+            connectionManagerReference.needsToUpdateChatWindow = false;
+            connectionManagerReference.interrupt();
+            connectionManagerReference.selectChat();
         }
     }
 
-    private void sendMessage(String finalMessage, boolean isOutgoing) {
-        Date now = new Date();
+    private void sendMessage(String finalMessage) {
+        long timestamp = System.currentTimeMillis();
+        HashMap<String, String> message = new HashMap<>();
+
+        message.put("chatName", connectionManagerReference.getSelectedChatName());
+        message.put("text", finalMessage);
+        message.put("username", connectionManagerReference.getUsername());
+        message.put("timestamp", Long.toString(timestamp));
+
+        messageList.add(message);
+        hasNewMessages = true;
+        connectionManagerReference.sendMessage(message);
+    }
+
+    private void appendMessageToChat(String username, String message, long timestamp) {
+        Date now = new Date(timestamp);
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
         SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
 
-        String timestamp = dateFormat.format(now) + " " + timeFormat.format(now);
-        String formattedMessage = "[" + timestamp + "] " + finalMessage + "\n";
+        String formattedTimestamp = dateFormat.format(now) + " " + timeFormat.format(now);
 
-        if (isOutgoing) {
+        if (Objects.equals(username, connectionManagerReference.getUsername())) {
             // Determine the number of invisible characters based on the alignment
-            int invisibleChars = 100;
+            int invisibleChars = 10;
 
             // Add invisible characters to the message
-            StringBuilder paddedMessage = new StringBuilder();
-            for (int i = 0; i < invisibleChars; i++) {
-                paddedMessage.append(" ");
-            }
-            paddedMessage.append(formattedMessage);
+            String paddedMessage = " ".repeat(invisibleChars) + "[" + formattedTimestamp + "] " + message + "\n";
 
             // Append the padded message to the chat area without adding an extra newline
-            chatArea.append(paddedMessage.toString());
+            chatArea.append(paddedMessage);
         } else {
-            // Append incoming message directly without padding
-            chatArea.append(formattedMessage);
+            chatArea.append("[" + formattedTimestamp + "] " + message + "\n");
         }
     }
 
-    private void appendToMessageHistory(String message) {
-        Date now = new Date();
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
+    public long getLastMessageTimestamp() {
+        messageList.sort(Comparator.comparingLong(map -> Long.parseLong(map.get("timestamp"))));
+        if (messageList.size() > 0) return Long.parseLong(messageList.get(0).get("timestamp"));
+        else return 0;
+    }
 
-        String timestamp = dateFormat.format(now) + " " + timeFormat.format(now);
-        messageHistoryArea.append("[" + timestamp + "] " + message + "\n");
+    public void addMessages(JSONArray messages) {
+        Set<String> uniqueTimestamps = new HashSet<>();
+
+        // Add timestamps from messageList
+        for (HashMap<String, String> map : messageList) {
+            String timestamp = map.get("timestamp");
+            if (timestamp != null) {
+                uniqueTimestamps.add(timestamp);
+            }
+        }
+
+        // Add messages with unique timestamps from jsonArray to messageList
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject jsonMessage = messages.getJSONObject(index);
+            if (!uniqueTimestamps.contains(String.valueOf(jsonMessage.get("timestamp")))) {
+                // Convert JSONObject to HashMap
+                HashMap<String, String> hashMapMessage = new HashMap<>();
+                for (String key : jsonMessage.keySet()) {
+                    hashMapMessage.put(key, jsonMessage.getString(key));
+                }
+                uniqueTimestamps.add(String.valueOf(jsonMessage.get("timestamp")));
+                messageList.add(hashMapMessage);
+                hasNewMessages = true;
+            }
+        }
+
+        if (hasNewMessages) updateMessagesDisplay();
+    }
+
+    private void updateMessagesDisplay() {
+        messageList.sort(Comparator.comparingLong(map -> Long.parseLong(map.get("timestamp"))));
+
+        for (HashMap<String, String> message : messageList) {
+            if (!Boolean.parseBoolean(message.get("displayed"))) {
+                appendMessageToChat(message.get("username"), message.get("text"), Long.parseLong(message.get("timestamp")));
+                message.put("displayed", String.valueOf(true));
+            }
+        }
+        hasNewMessages = false;
+    }
+
+    public void setMessageList(ArrayList<HashMap<String, String>> messageList) {
+        this.messageList = messageList;
     }
 }

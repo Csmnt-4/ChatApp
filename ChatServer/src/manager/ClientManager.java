@@ -1,73 +1,186 @@
 package manager;
 
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.ObjectInputStream;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.*;
 import java.util.*;
 
 public class ClientManager {
 
-    HashMap<String, String> userNames = new HashMap<>();
-    HashMap<String, ArrayList<Map<String, String>>> chats = new HashMap<>();
+    private HashMap<String, String> usernames = new HashMap<>();
+    private HashMap<String, ArrayList<Map<String, String>>> chats = new HashMap<>();
+
+    private boolean chatHasNewMessages;
+    private List<String> currentlyTyping;
 
     public ClientManager() {
         try {
-            FileInputStream fileInput = new FileInputStream(
-                    "userNames.txt");
-
-            ObjectInputStream objectInput
-                    = new ObjectInputStream(fileInput);
-
-			userNames = (HashMap<String, String>) objectInput.readObject();
-
-            objectInput.close();
-            fileInput.close();
-
-			FileInputStream fileInput1 = new FileInputStream(
-					"chats.txt");
-
-			ObjectInputStream objectInput1
-					= new ObjectInputStream(fileInput1);
-
-			userNames = (HashMap<String, String>) objectInput1.readObject();
-
-			objectInput1.close();
-			fileInput1.close();
-        } catch (IOException ioException) {
-            ioException.printStackTrace();
-        } catch (ClassNotFoundException classNotFoundException) {
-            System.out.println("A class in the map is not found");
-            classNotFoundException.printStackTrace();
+            deserializeUserNames();
+            deserializeChats();
+        } catch (IOException | ClassNotFoundException exception) {
+            exception.printStackTrace();
         }
-        
-        
     }
 
     public boolean checkSerialNumber(String serialNumber, String userName) {
         return false;
     }
-    
-    public void deserializeUserNames() {
-    	
-    }
-    
-    public void deserializeUserNames() {
-    	
-    }
-    
-    public void serializeUserNames() {
-    	
-    }
-    
-    public void serializeChats() {
-    	
+
+    public void deserializeUserNames() throws IOException, ClassNotFoundException {
+        try (FileInputStream fileInput = new FileInputStream("userNames.txt")) {
+
+            ObjectInputStream objectInputUsernames = new ObjectInputStream(fileInput);
+
+            usernames = (HashMap<String, String>) objectInputUsernames.readObject();
+
+            objectInputUsernames.close();
+        } catch (FileNotFoundException fileNotFoundException) {
+            System.out.println("No serialized files were found.");
+        }
     }
 
-    public ArrayList getChatNames() {
-        ArrayList<String> chatNames = new ArrayList<String>();
+    public void deserializeChats() throws IOException, ClassNotFoundException {
+        try (FileInputStream fileInput1 = new FileInputStream("chats.txt")) {
+
+            ObjectInputStream objectInput1 = new ObjectInputStream(fileInput1);
+
+            chats = (HashMap<String, ArrayList<Map<String, String>>>) objectInput1.readObject();
+
+            objectInput1.close();
+        } catch (FileNotFoundException fileNotFoundException) {
+            System.out.println("No serialized files were found.");
+        }
+    }
+
+    public void serializeUserNames() throws IOException {
+        FileOutputStream fileOutputStream = new FileOutputStream("userNames.txt");
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+        objectOutputStream.writeObject(usernames);
+        objectOutputStream.flush();
+        objectOutputStream.close();
+    }
+
+    public void serializeChats() throws IOException {
+        FileOutputStream fileOutputStream = new FileOutputStream("chats.txt");
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+        objectOutputStream.writeObject(chats);
+        objectOutputStream.flush();
+        objectOutputStream.close();
+    }
+
+    public JSONObject getChatNames() {
+        JSONObject response = new JSONObject();
+
+        ArrayList<String> chatNames = new ArrayList<>();
         chats.forEach((key, value) -> {
             chatNames.add(key);
         });
-        return chatNames;
+        response.put("messageType", "CHAT_NAMES");
+        response.put("chatNames", chatNames);
+
+        return response;
+    }
+
+    public JSONObject addNewChat(String chatName) {
+        JSONObject response = new JSONObject();
+
+        chats.put(chatName, new ArrayList<>());
+
+        response.put("messageType", "OK");
+        return response;
+    }
+
+    public JSONObject addNewMessageToChat(JSONObject jsonObject) {
+        JSONObject response = new JSONObject();
+
+        HashMap<String, String> message = new HashMap<>();
+        message.put("text", (String) jsonObject.get("text"));
+        message.put("username", (String) jsonObject.get("username"));
+        message.put("timestamp", (String) jsonObject.get("timestamp"));
+        chats.get(jsonObject.getString("chatName")).add(message);
+        response.put("messageType", "OK");
+
+        try {
+            serializeChats();    // TODO: Temporary
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return response;
+    }
+
+    public JSONObject getMessagesSince(String chatName, Long timestamp, int numberOfMessages) {
+        JSONObject response = new JSONObject();
+        JSONArray jsonArray = new JSONArray();
+        try {
+            if (timestamp > 0) {
+                for (Map<String, String> map : chats.get(chatName)) {
+                    if (map.containsKey("timestamp") && Long.parseLong(map.get("timestamp")) > timestamp) {
+                        jsonArray.put(new JSONObject(map));
+                    }
+                }
+
+                response.put("messageType", "NEW_MESSAGES");
+                response.put("messages", jsonArray);
+            } else if (numberOfMessages > 0) {
+                chats.get(chatName).sort(Comparator.comparingLong(map -> Long.parseLong(map.get("timestamp"))));
+
+                // Add the last n HashMaps to a new list
+                int startIndex = Math.max(0, chats.get(chatName).size() - numberOfMessages);
+                for (int i = startIndex; i < chats.get(chatName).size(); i++) {
+                    jsonArray.put(new JSONObject(chats.get(chatName).get(i)));
+                }
+
+                response.put("messageType", "NEW_MESSAGES");
+                response.put("messages", jsonArray);
+            } else {
+                response.put("messageType", "OK");
+            }
+        } catch (NumberFormatException exception) {
+            System.out.println("Unable to parse the number.");
+
+            response.put("messageType", "ERROR");
+            response.put("message", "Unable to parse timestamp or number of messages: Incorrect number format");
+        }
+        return response;
+    }
+
+    public JSONObject compareTheNumberOfMessagesSince(String chatName, Long timestamp, int numberOfMessages) {
+        JSONObject response = new JSONObject();
+        int localNumberOfMessages = 0;
+        try {
+            for (Map<String, String> map : chats.get(chatName)) {
+
+                if (map.containsKey("timestamp") && Long.parseLong(map.get("timestamp")) > timestamp) {
+                    localNumberOfMessages++;
+                }
+            }
+
+            if (localNumberOfMessages > numberOfMessages) {
+                return getMessagesSince(chatName, timestamp, 0);
+            }
+
+        } catch (NumberFormatException exception) {
+            System.out.println("Unable to parse a number.");
+            response.put("messageType", "ERROR");
+            response.put("message", "Unable to parse timestamp or number of messages: Incorrect number format");
+        }
+        return response;
+    }
+
+    public JSONObject updateTypingList(JSONObject jsonObject) {
+        JSONObject response = new JSONObject();
+
+        String username = jsonObject.getString("username");
+        boolean isTyping = jsonObject.getBoolean("isTyping");
+        if (isTyping) {
+            currentlyTyping.add(username);
+        } else {
+            currentlyTyping.removeIf(s -> Objects.equals(s, username));
+        }
+        for (String typingUsers : currentlyTyping) {
+            response.accumulate("typing", typingUsers);
+        }
+        return response;
     }
 }
