@@ -8,11 +8,9 @@ import java.util.*;
 
 public class ClientManager {
 
+    private final HashMap<String, List<String>> currentlyTyping = new HashMap<>();
     private HashMap<String, String> usernames = new HashMap<>();
     private HashMap<String, ArrayList<Map<String, String>>> chats = new HashMap<>();
-
-    private boolean chatHasNewMessages;
-    private List<String> currentlyTyping;
 
     public ClientManager() {
         try {
@@ -73,12 +71,9 @@ public class ClientManager {
         JSONObject response = new JSONObject();
 
         ArrayList<String> chatNames = new ArrayList<>();
-        chats.forEach((key, value) -> {
-            chatNames.add(key);
-        });
+        chats.forEach((key, value) -> chatNames.add(key));
         response.put("messageType", "CHAT_NAMES");
         response.put("chatNames", chatNames);
-
         return response;
     }
 
@@ -88,6 +83,7 @@ public class ClientManager {
         chats.put(chatName, new ArrayList<>());
 
         response.put("messageType", "OK");
+        if (currentlyTyping.containsKey(chatName)) response.put("typing", currentlyTyping.get(chatName));
         return response;
     }
 
@@ -102,10 +98,12 @@ public class ClientManager {
         response.put("messageType", "OK");
 
         try {
-            serializeChats();    // TODO: Temporary
+            serializeChats();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        if (currentlyTyping.containsKey(jsonObject.getString("chatName")))
+            response.put("typing", currentlyTyping.get(jsonObject.getString("chatName")));
         return response;
     }
 
@@ -142,6 +140,7 @@ public class ClientManager {
             response.put("messageType", "ERROR");
             response.put("message", "Unable to parse timestamp or number of messages: Incorrect number format");
         }
+        if (currentlyTyping.containsKey(chatName)) response.put("typing", currentlyTyping.get(chatName));
         return response;
     }
 
@@ -164,7 +163,9 @@ public class ClientManager {
             System.out.println("Unable to parse a number.");
             response.put("messageType", "ERROR");
             response.put("message", "Unable to parse timestamp or number of messages: Incorrect number format");
+            if (currentlyTyping.containsKey(chatName)) response.put("typing", currentlyTyping.get(chatName));
         }
+
         return response;
     }
 
@@ -174,13 +175,22 @@ public class ClientManager {
         String username = jsonObject.getString("username");
         boolean isTyping = jsonObject.getBoolean("isTyping");
         if (isTyping) {
-            currentlyTyping.add(username);
+            if (currentlyTyping.containsKey(jsonObject.getString("chatName"))) {
+                if (!currentlyTyping.get(jsonObject.getString("chatName")).contains(username))
+                    currentlyTyping.get(jsonObject.getString("chatName")).add(username);
+            } else {
+                List<String> usernames = List.of(new String[]{username});
+                currentlyTyping.put(jsonObject.getString("chatName"), usernames);
+            }
         } else {
-            currentlyTyping.removeIf(s -> Objects.equals(s, username));
+            if (currentlyTyping.containsKey(jsonObject.getString("chatName"))) {
+                currentlyTyping.get(jsonObject.getString("chatName")).removeIf(s -> Objects.equals(s, username));
+            } else {
+                currentlyTyping.put(jsonObject.getString("chatName"), new ArrayList<>());
+            }
         }
-        for (String typingUsers : currentlyTyping) {
-            response.accumulate("typing", typingUsers);
-        }
+        response.put("messageType", "TYPING");
+        response.put("typing", currentlyTyping.get(jsonObject.getString("chatName")));
         return response;
     }
 }

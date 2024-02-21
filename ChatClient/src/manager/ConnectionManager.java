@@ -4,43 +4,59 @@ import org.json.JSONObject;
 import ui.ChatSelectionWindow;
 import ui.ChatWindow;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
+import javax.swing.*;
+import java.io.*;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
+import java.net.SocketTimeoutException;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Random;
+import java.util.*;
 
 public class ConnectionManager extends Thread {
 
     private final Random random = new Random();
-    private final ChatSelectionWindow chatSelectionWindow = new ChatSelectionWindow();
-    private final long lastUpdateTimeSeconds = Instant.now().getEpochSecond();
     public boolean needsToUpdateChatWindow;
+    private final long lastUpdateTimeSeconds = Instant.now().getEpochSecond();
     private String username;
     private String ipAddress;
     private int port = 12345;
-    private final ArrayList<String> chatNames = new ArrayList<String>();
+    private final ArrayList<String> chatNames = new ArrayList<>();
     private String selectedChatName;
     private ChatWindow chatWindow;
-    private long currentTimeSeconds;
     private int tMax = 1;
     private int tRandomUpdate = 0;
 
+    public void connectToChat(String chatName) {
+        setSelectedChatName(chatName);
+        // Open chat window without initially prompting for emoji
+        setChatWindow(new ChatWindow(getUsername(), getSelectedChatName(), this));
+        if (chatNames.contains(chatName)) {
+            requestMessages(0, 30);
+            chatWindow.sendMessage(getUsername() + " has joined the chat~");
+        } else {
+            createChat(chatName);
+        }
+        needsToUpdateChatWindow = true;
+        chatWindow.setVisible(true);
+    }
+
+    public void createChat(String chatName) {
+        JSONObject message = new JSONObject();
+        message.put("messageType", "CREATE_CHAT");
+        message.put("chatName", chatName);
+        establishConnectionToServer(message);
+    }
+
     public void update() {
-        currentTimeSeconds = Instant.now().getEpochSecond();
+        typingUpdate(chatWindow.hasMessageInProcess());
+        long currentTimeSeconds = Instant.now().getEpochSecond();
         if (lastUpdateTimeSeconds + tRandomUpdate < currentTimeSeconds) {
             requestMessages(chatWindow.getLastMessageTimestamp(), 10);
         }
-        if (chatWindow.hasNewMessages) {
-            tMax = 1;
-        }
         tRandomUpdate = getRandomTime();
         try {
-            Thread.sleep(tRandomUpdate * 1000L);
+            Thread.sleep(tRandomUpdate * 100L);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -86,12 +102,12 @@ public class ConnectionManager extends Thread {
         message.put("numberOfMessages", numberOfMessages);
     }
 
-    public void typingUpdate(String username, boolean isTyping) {
+    public void typingUpdate(boolean isTyping) {
         JSONObject message = new JSONObject();
         message.put("messageType", "TYPING");
 
         message.put("chatName", getSelectedChatName());
-        message.put("username", username);
+        message.put("username", getUsername());
         message.put("isTyping", isTyping);
 
         establishConnectionToServer(message);
@@ -99,7 +115,9 @@ public class ConnectionManager extends Thread {
 
     public boolean establishConnectionToServer(JSONObject jsonToSend) {
         try {
-            Socket client = new Socket(ipAddress, port);
+            Socket client = new Socket();
+            SocketAddress socketAddress = new InetSocketAddress(ipAddress, port);
+            client.connect(socketAddress, 4000);
             OutputStream outToServer = client.getOutputStream();
 
             DataOutputStream out = new DataOutputStream(outToServer);
@@ -112,26 +130,37 @@ public class ConnectionManager extends Thread {
 
             client.close();
             return true;
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (SocketTimeoutException socketTimeoutException) {
+            JOptionPane.showMessageDialog(JOptionPane.getDesktopPaneForComponent(null), "Socket timed out", "Error", JOptionPane.ERROR_MESSAGE);
+            return false;
+        } catch (Exception exception) {
+            JOptionPane.showMessageDialog(JOptionPane.getDesktopPaneForComponent(null), "Couldn't connect to server", "Error", JOptionPane.ERROR_MESSAGE);
+            exception.printStackTrace();
             return false;
         }
     }
 
     public void processReceivedDataFromServer(JSONObject jsonObject) {
-        switch ((String) jsonObject.get("messageType")) {
+        switch (jsonObject.getString("messageType")) {
 
             case "TYPING" -> {
                 //Update chat to reflect new people who are typing
-            }
-            case "NEW_MESSAGES" -> {
-                if (jsonObject.getJSONArray("messages").length() == 0) {
-                    tMax++;
-                } else {
-                    tMax = 1;
-                    chatWindow.addMessages(jsonObject.getJSONArray("messages"));
+                StringBuilder typingUsernames = new StringBuilder("Typing: ");
+                for (Object jsonArtifact : jsonObject.getJSONArray("typing")) {
+                    typingUsernames.append(jsonArtifact.toString()).append(", ");
                 }
+                if (typingUsernames.length() > 9) {
+                    typingUsernames = new StringBuilder(typingUsernames.substring(0, Math.min(50, typingUsernames.length() - 2)));
+                    if (typingUsernames.length() == 50) {
+                        typingUsernames.append("...");
+                    }
+                    chatWindow.setTypingPeople(typingUsernames.toString());
+                } else {
+                    chatWindow.setTypingPeople("");
+                }
+
             }
+            case "NEW_MESSAGES" -> chatWindow.addMessages(jsonObject.getJSONArray("messages"));
             case "CHAT_NAMES" -> {
                 chatNames.clear();
                 for (Object chatName : jsonObject.getJSONArray("chatNames")) {
@@ -139,9 +168,8 @@ public class ConnectionManager extends Thread {
                 }
 
             }
-            case "OK" -> {
-                tMax++;
-            }
+            case "OK" -> tMax++;
+
             default -> System.out.println(jsonObject.getString("responseMessage"));
         }
     }
@@ -176,27 +204,7 @@ public class ConnectionManager extends Thread {
     }
 
     public void selectChat() {
-        chatSelectionWindow.startChatSelection(getChatNames(), this);
-    }
-
-    public void connectToChat(String chatName) {
-        setSelectedChatName(chatName);
-        // Open chat window without initially prompting for emoji
-        setChatWindow(new ChatWindow(getUsername(), getSelectedChatName(), this));
-        if (chatNames.contains(chatName)) {
-            requestMessages(0, 30);
-        } else {
-            createChat(chatName);
-        }
-        needsToUpdateChatWindow = true;
-        chatWindow.setVisible(true);
-    }
-
-    public void createChat(String chatName) {
-        JSONObject message = new JSONObject();
-        message.put("messageType", "CREATE_CHAT");
-        message.put("chatName", chatName);
-        establishConnectionToServer(message);
+        new ChatSelectionWindow(this, getChatNames());
     }
 
     public String getSelectedChatName() {
@@ -205,6 +213,16 @@ public class ConnectionManager extends Thread {
 
     public void setSelectedChatName(String selectedChatName) {
         this.selectedChatName = selectedChatName;
+    }
+
+    public boolean testConnection() {
+        JSONObject test = new JSONObject();
+        test.put("messageType", "TEST");
+        return establishConnectionToServer(test);
+    }
+
+    public void setTMax(int i) {
+        tMax = i;
     }
 
 /*  "REQUEST_COMPARE"
